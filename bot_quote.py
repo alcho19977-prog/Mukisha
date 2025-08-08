@@ -155,29 +155,30 @@ def build_app() -> Application:
     return app
 
 
-# ===== ЗАПУСК ДЛЯ RENDER =====
-async def setup_webhook(app: Application):
-    base = os.getenv("WEBHOOK_BASE")  # например, https://your-service.onrender.com
-    if not base:
-        raise RuntimeError("ENV WEBHOOK_BASE не задан")
-    port = int(os.getenv("PORT", "8080"))
-    path = f"/webhook/{TOKEN}"
-    url = f"{base}{path}"
-    await app.bot.set_webhook(url=url, drop_pending_updates=True)
-    await app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=url,
-        stop_signals=None
-    )
-
-
-if __name__ == "__main__":
+# ===== ОСНОВНОЙ ЗАПУСК =====
+async def main():
+    global QUOTES
     QUOTES = load_quotes()
     app = build_app()
     mode = os.getenv("MODE", "polling").lower()
 
     if mode == "webhook":
-        asyncio.run(setup_webhook(app))
+        base = os.getenv("WEBHOOK_BASE")
+        if not base:
+            raise RuntimeError("ENV WEBHOOK_BASE не задан")
+        port = int(os.getenv("PORT", "8080"))
+        path = f"/webhook/{TOKEN}"
+        url = f"{base}{path}"
+        await app.bot.set_webhook(url=url, drop_pending_updates=True)
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=url,
+            stop_signals=None
+        )
     else:
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        await app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
