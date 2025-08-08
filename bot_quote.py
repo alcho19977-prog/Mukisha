@@ -10,18 +10,19 @@ from telegram.ext import (
 
 # ===== НАСТРОЙКИ =====
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002701059389"))  # ID канала для постинга
-QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по строке)
+QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по одной строке)
 TOKEN = os.getenv("TOKEN")                                    # токен бота
 
-# Память «без повторов» на чат
+# Память «без повторов» по чатам
 chat_state: Dict[int, Dict[str, object]] = {}
 QUOTES: List[str] = []
 
 
 # ===== ЗАГРУЗКА ЦИТАТ =====
 def load_quotes() -> List[str]:
-    """Читает цитаты из файла (по одной в строке). Пустые строки игнорируются."""
+    """Читает цитаты из файла quotes.txt (UTF-8), пустые строки игнорирует."""
     if not os.path.exists(QUOTES_FILE):
+        # Небольшой запас, пока не положили quotes.txt
         return [
             "Любовь — это жизнь, и всё, что я понимаю в жизни, я понимаю только потому, что люблю. — Лев Толстой",
             "Любить — значит видеть человека таким, каким его задумал Бог. — Ф. М. Достоевский",
@@ -33,9 +34,9 @@ def load_quotes() -> List[str]:
         return [line.strip() for line in f if line.strip()]
 
 
-# ===== ЛОГИКА ПОЛУЧЕНИЯ ЦИТАТ =====
+# ===== ЛОГИКА ВЫБОРА ЦИТАТ =====
 def next_quote_for(chat_id: int) -> str:
-    """Возвращает следующую цитату без повторов по чату. При исчерпании — перемешивает заново."""
+    """Возвращает следующую цитату без повторов; при исчерпании — тасует заново."""
     state = chat_state.get(chat_id)
     if not state or not state.get("order"):
         order = list(range(len(QUOTES)))
@@ -78,16 +79,18 @@ async def show_quote(chat_id: int, context: ContextTypes.DEFAULT_TYPE, quote: Op
 
 # ===== ОБРАБОТЧИКИ =====
 async def start_like(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Любой текст (и /start) — показываем кнопку пробуждения."""
+    """Любой текст (и /start) — показываем кнопку запуска."""
     await update.effective_message.reply_text(
         "Нажми «Цитата дня» — пришлю цитату и предложу отправить её в канал.",
         reply_markup=kb_start()
     )
 
+
 async def on_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await show_quote(query.message.chat_id, context)
+
 
 async def on_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -102,11 +105,13 @@ async def on_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await query.message.reply_text(f"❌ Не удалось отправить в канал: {e}", reply_markup=kb_actions())
 
+
 async def on_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     new_q = next_quote_for(query.message.chat_id)
     await show_quote(query.message.chat_id, context, quote=new_q)
+
 
 async def on_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Кнопка «Обновить цитаты» — перечитать файл и сбросить очереди."""
@@ -117,12 +122,14 @@ async def on_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.clear()
     await query.message.reply_text(f"♻ Цитаты обновлены. Всего теперь {len(QUOTES)} шт.", reply_markup=kb_start())
 
+
 async def reload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /reload — то же самое, только командой."""
     global QUOTES
     QUOTES = load_quotes()
     chat_state.clear()
     await update.effective_message.reply_text(f"♻ Цитаты обновлены. Всего теперь {len(QUOTES)} шт.")
+
 
 async def push_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /push — сразу опубликовать новую цитату в канал."""
@@ -131,13 +138,12 @@ async def push_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("✅ Цитата опубликована в канал.")
 
 
-# ===== ХУК ДЛЯ ВЕБХУКА (PTB сам вызовет перед стартом) =====
+# ===== post_init: ставим вебхук перед стартом =====
 async def post_init(app: Application):
     base = os.getenv("WEBHOOK_BASE")
     if not base:
         raise RuntimeError("ENV WEBHOOK_BASE не задан")
     url = f"{base}/webhook/{TOKEN}"
-    # Ставим вебхук и сбрасываем «старые» апдейты
     await app.bot.set_webhook(url=url, drop_pending_updates=True)
     print(f"✅ Webhook установлен: {url}")
 
@@ -148,7 +154,7 @@ def build_app() -> Application:
         raise RuntimeError("ENV TOKEN не задан. Установи TOKEN=твой_токен_бота")
     app = Application.builder().token(TOKEN).build()
 
-    # Пробуждение (реагируем и на /start, и на любой текст)
+    # Пробуждение
     app.add_handler(CommandHandler("start", start_like))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start_like))
 
@@ -172,17 +178,21 @@ if __name__ == "__main__":
 
     mode = os.getenv("MODE", "polling").lower()
     if mode == "webhook":
-        # Настраиваем хук и стартуем сервер вебхуков
+        # Укажем post_init — PTB вызовет его в своём event loop до старта
         app.post_init = post_init
+
         port = int(os.getenv("PORT", "8080"))
         base = os.getenv("WEBHOOK_BASE")
+        if not base:
+            raise RuntimeError("ENV WEBHOOK_BASE не задан")
         url = f"{base}/webhook/{TOKEN}"
+
+        # run_webhook С ВЕРНОЙ СИГНАТУРОЙ: только webhook_url (без webhook_path!)
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
             webhook_url=url,
-            allowed_updates=Update.ALL_TYPES,
             stop_signals=None
         )
     else:
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        app.run_polling()
