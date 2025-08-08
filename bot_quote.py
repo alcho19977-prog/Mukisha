@@ -5,14 +5,23 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 
-# === Переменные окружения (Render -> Environment) ===
+# === Переменные окружения (Render → Environment) ===
 TOKEN = os.getenv("TOKEN")
 WEBHOOK_BASE = os.getenv("WEBHOOK_BASE")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # строкой тоже ок
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 MODE = os.getenv("MODE", "webhook").lower()
 PORT = int(os.getenv("PORT", 8443))
 
-# Базовые проверки (чтобы падало явно, если чего-то нет)
+# ==== ОТЛАДКА ====
+print("=== DEBUG: ENV VARS ===")
+print("TOKEN:", TOKEN)
+print("WEBHOOK_BASE:", WEBHOOK_BASE)
+print("CHANNEL_ID:", CHANNEL_ID)
+print("MODE:", MODE)
+print("PORT:", PORT)
+print("=======================")
+
+# Базовые проверки
 if not TOKEN:
     raise RuntimeError("ENV TOKEN не задан. Установи TOKEN=твой_токен_бота в Render → Environment.")
 if not WEBHOOK_BASE:
@@ -20,7 +29,7 @@ if not WEBHOOK_BASE:
 if not CHANNEL_ID:
     raise RuntimeError("ENV CHANNEL_ID не задан. Пример: -1002701059389")
 
-# === Простой набор цитат (можешь расширить) ===
+# === Простой набор цитат ===
 QUOTES = [
     "Любовь — это когда счастье другого человека важнее твоего собственного. — Х. Джексон Браун",
     "Мы принимаем любовь, которую думаем, что заслуживаем. — Стивен Чбоски",
@@ -29,11 +38,9 @@ QUOTES = [
     "Только в любви мы можем найти себя по-настоящему. — Томас Мертон",
 ]
 
-# Запоминаем «текущую» цитату для каждого чата
 current_quotes = {}
 
 
-# === Хендлеры ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("📩 /start получен")
     quote = random.choice(QUOTES)
@@ -46,6 +53,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📜 Цитата дня:\n\n{quote}",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -74,7 +82,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# === Приложение ===
 def build_app():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -82,7 +89,6 @@ def build_app():
     return app
 
 
-# === Запуск (Render) ===
 if __name__ == "__main__":
     app = build_app()
 
@@ -92,8 +98,8 @@ if __name__ == "__main__":
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=TOKEN,           # путь у вашего сервера
-            webhook_url=webhook_url,  # полный публичный URL для Telegram
+            url_path=TOKEN,
+            webhook_url=webhook_url,
             allowed_updates=Update.ALL_TYPES
         )
     else:
