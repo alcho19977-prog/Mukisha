@@ -1,18 +1,25 @@
 import os
 import random
 import logging
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import time
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ===== ЛОГИ =====
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+# Логирование
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# ===== ЦИТАТЫ =====
+# Чтение переменных окружения
+TOKEN = os.getenv("TOKEN")
+WEBHOOK_BASE = os.getenv("WEBHOOK_BASE")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+MODE = os.getenv("MODE", "webhook")
+PORT = int(os.getenv("PORT", "10000"))
+
+if not TOKEN or not WEBHOOK_BASE or not CHANNEL_ID:
+    raise RuntimeError("ENV TOKEN, WEBHOOK_BASE или CHANNEL_ID не заданы.")
+
+# Список цитат
 QUOTES = [
     "Будь самой лучшей версией себя. — Одри Хепбёрн",
     "Сильная женщина улыбается сквозь слёзы. — Мэрилин Монро",
@@ -64,77 +71,43 @@ QUOTES = [
     "Счастливая женщина — это сила. — Мишель Обама"
 ]
 
-# ===== ПАРАМЕТРЫ =====
-TOKEN = os.getenv("TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-MODE = os.getenv("MODE", "webhook")
-WEBHOOK_BASE = os.getenv("WEBHOOK_BASE")
-PORT = int(os.getenv("PORT", 10000))
-
-if not TOKEN:
-    raise RuntimeError("ENV TOKEN не задан. Установи TOKEN в Render → Environment.")
-if not CHANNEL_ID:
-    raise RuntimeError("ENV CHANNEL_ID не задан.")
-
-# ===== ЛОГИ ПЕРЕМЕННЫХ =====
-print(f"PORT: {PORT}")
-print(f"MODE: {MODE}")
-print(f"CHANNEL_ID: {CHANNEL_ID}")
-print(f"WEBHOOK_BASE: {WEBHOOK_BASE}")
-print(f"TOKEN: {TOKEN}")
-
-# ===== ФУНКЦИИ =====
+# Функция выбора случайной цитаты
 def get_random_quote():
-    return random.choice(QUOTES)
+    return f"💌 *{random.choice(QUOTES)}*"
 
-async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
+# Отправка цитаты в канал
+async def send_quote_to_channel():
+    app = ApplicationBuilder().token(TOKEN).build()
     quote = get_random_quote()
-    await context.bot.send_message(
-        chat_id=CHANNEL_ID,
-        text=f"💌 _{quote}_",
-        parse_mode="Markdown"
-    )
+    await app.bot.send_message(chat_id=CHANNEL_ID, text=quote, parse_mode="Markdown")
+    logging.info("Отправлена цитата в канал: %s", quote)
 
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    quote = get_random_quote()
-    buttons = [["📤 Отправить в канал", "🔄 Другая цитата"]]
-    await update.message.reply_text(
-        f"💌 _{quote}_",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-    )
+    await update.message.reply_text(get_random_quote(), parse_mode="Markdown")
 
-async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "📤 Отправить в канал":
-        quote = update.message.reply_to_message.text if update.message.reply_to_message else get_random_quote()
-        await context.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=f"💌 {quote}",
-            parse_mode="Markdown"
+# Главная функция
+async def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # Команды
+    app.add_handler(CommandHandler("start", start))
+
+    # Планировщик
+    scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
+    scheduler.add_job(send_quote_to_channel, "cron", hour=10, minute=0)
+    scheduler.start()
+
+    if MODE == "webhook":
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_BASE}/{TOKEN}"
         )
-        await update.message.reply_text("✅ Цитата отправлена в канал.")
-    elif text == "🔄 Другая цитата":
-        await start(update, context)
+    else:
+        await app.run_polling()
 
-# ===== СБОРКА =====
-app = ApplicationBuilder().token(TOKEN).build()
-
-# Автопостинг в 10:00
-scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-scheduler.add_job(send_daily_quote, trigger="cron", hour=10, minute=0, args=[app.bot])
-scheduler.start()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
-
-# ===== ЗАПУСК =====
-if MODE == "webhook":
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"{WEBHOOK_BASE}/{TOKEN}"
-    )
-else:
-    app.run_polling()
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
