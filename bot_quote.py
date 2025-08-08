@@ -1,6 +1,5 @@
 import os
 import random
-import asyncio
 from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,7 +10,7 @@ from telegram.ext import (
 
 # ===== НАСТРОЙКИ =====
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002701059389"))  # ID канала
-QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по строке)
+QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами
 TOKEN = os.getenv("TOKEN")                                    # токен бота
 
 # Память «без повторов» на чат
@@ -155,9 +154,8 @@ def build_app() -> Application:
     return app
 
 
-# ===== ОСНОВНОЙ ЗАПУСК =====
-async def main():
-    global QUOTES
+# ===== ЗАПУСК ДЛЯ RENDER =====
+if __name__ == "__main__":
     QUOTES = load_quotes()
     app = build_app()
     mode = os.getenv("MODE", "polling").lower()
@@ -169,16 +167,12 @@ async def main():
         port = int(os.getenv("PORT", "8080"))
         path = f"/webhook/{TOKEN}"
         url = f"{base}{path}"
-        await app.bot.set_webhook(url=url, drop_pending_updates=True)
-        await app.run_webhook(
+        app.bot.set_webhook(url=url, drop_pending_updates=True)
+        app.run_webhook(
             listen="0.0.0.0",
             port=port,
             webhook_url=url,
             stop_signals=None
         )
     else:
-        await app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
