@@ -1,5 +1,6 @@
 import os
 import random
+import asyncio
 from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -165,13 +166,17 @@ if __name__ == "__main__":
         if not base:
             raise RuntimeError("ENV WEBHOOK_BASE не задан")
         port = int(os.getenv("PORT", "8080"))
-        path = f"/webhook/{TOKEN}"
-        url = f"{base}{path}"
-        # run_webhook сам установит вебхук; set_webhook вручную не нужен
+        url = f"{base}/webhook/{TOKEN}"
+
+        # 1) ЯВНО РЕГИСТРИРУЕМ ВЕБХУК У TELEGRAM (асинхронно, но единоразово)
+        asyncio.run(app.bot.set_webhook(url=url, drop_pending_updates=True))
+
+        # 2) СТАРТУЕМ ВЕБХУК-СЕРВЕР
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
             webhook_url=url,
+            allowed_updates=Update.ALL_TYPES,
             stop_signals=None
         )
     else:
