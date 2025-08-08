@@ -2,25 +2,15 @@ import os
 import random
 import logging
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackContext
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import pytz
 
 # === ЛОГИ ===
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
-TOKEN = os.getenv("TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002701059389")
-
-if not TOKEN:
-    raise RuntimeError("ENV TOKEN не задан. Установи TOKEN=твой_токен_бота в Render → Environment.")
-
-# === СПИСОК ЦИТАТ ===
+# === ЦИТАТЫ ===
 QUOTES = [
     "«Будь самой лучшей версией себя.» — Одри Хепбёрн",
     "«Сильная женщина улыбается сквозь слёзы.» — Мэрилин Монро",
@@ -72,54 +62,64 @@ QUOTES = [
     "«Счастливая женщина — это сила.» — Мишель Обама"
 ]
 
+# === НАСТРОЙКИ ===
+TOKEN = os.getenv("TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+PORT = int(os.getenv("PORT", "10000"))
+WEBHOOK_BASE = os.getenv("WEBHOOK_BASE")
+
+if not TOKEN:
+    raise RuntimeError("ENV TOKEN не задан. Установи TOKEN в Render → Environment.")
+
 # === КНОПКИ ===
-MAIN_MENU = ReplyKeyboardMarkup(
-    [["🚀 Старт", "💌 Цитата дня"]],
-    resize_keyboard=True
-)
-QUOTE_MENU = ReplyKeyboardMarkup(
-    [["📢 Отправить в канал", "🔄 Другая цитата"]],
-    resize_keyboard=True
-)
+def main_menu():
+    return ReplyKeyboardMarkup(
+        [["✨ Цитата дня"], ["📤 Отправить в канал", "🔄 Другая цитата"]],
+        resize_keyboard=True
+    )
 
-# === ФУНКЦИИ ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Выберите действие:", reply_markup=MAIN_MENU)
-
-async def quote_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# === ОБРАБОТЧИКИ ===
+async def send_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quote = random.choice(QUOTES)
-    context.user_data["current_quote"] = quote
-    await update.message.reply_text(quote, reply_markup=QUOTE_MENU)
+    await update.message.reply_text(quote, reply_markup=main_menu())
+    context.user_data["last_quote"] = quote
 
 async def send_to_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    quote = context.user_data.get("current_quote", random.choice(QUOTES))
-    await context.bot.send_message(chat_id=CHANNEL_ID, text=quote)
-    await update.message.reply_text("✅ Цитата отправлена в канал!")
+    quote = context.user_data.get("last_quote", random.choice(QUOTES))
+    if CHANNEL_ID:
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=quote)
+        await update.message.reply_text("✅ Цитата отправлена в канал!", reply_markup=main_menu())
+    else:
+        await update.message.reply_text("❌ Канал не настроен в переменных окружения.", reply_markup=main_menu())
 
-async def another_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await quote_day(update, context)
+async def quote_of_the_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_quote(update, context)
 
-# === АВТОМАТИЧЕСКАЯ ОТПРАВКА В КАНАЛ ===
-async def auto_send_quote(context: CallbackContext):
+# Автопостинг
+async def auto_post(context: ContextTypes.DEFAULT_TYPE):
     quote = random.choice(QUOTES)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=quote)
-    logger.info(f"Автоцитата отправлена: {quote}")
+    logger.info(f"Автопост отправлен: {quote}")
 
 # === MAIN ===
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("quote", quote_day))
-    app.add_handler(CommandHandler("send", send_to_channel))
-    app.add_handler(CommandHandler("another", another_quote))
-
-    # === Планировщик ===
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Asia/Tashkent"))
-    scheduler.add_job(auto_send_quote, CronTrigger(hour=10, minute=0), args=[app.bot])
+    # Автопост в 10:00 по Ташкенту
+    scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
+    scheduler.add_job(auto_post, CronTrigger(hour=10, minute=0), args=[app.bot])
     scheduler.start()
 
-    app.run_polling()
+    # Обработчики
+    app.add_handler(MessageHandler(filters.Regex("^✨ Цитата дня$"), quote_of_the_day))
+    app.add_handler(MessageHandler(filters.Regex("^📤 Отправить в канал$"), send_to_channel))
+    app.add_handler(MessageHandler(filters.Regex("^🔄 Другая цитата$"), send_quote))
+    app.add_handler(MessageHandler(filters.ALL, quote_of_the_day))  # Ловим всё при первом входе
+
+    if WEBHOOK_BASE:
+        app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"{WEBHOOK_BASE}/{TOKEN}")
+    else:
+        app.run_polling()
 
 if __name__ == "__main__":
     main()
