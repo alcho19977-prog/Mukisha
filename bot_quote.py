@@ -15,11 +15,12 @@ TOKEN = os.getenv("TOKEN")                                    # токен из 
 
 # Память «без повторов» на чат
 chat_state: Dict[int, Dict[str, object]] = {}
+QUOTES: List[str] = []
 
 
+# ===== ЗАГРУЗКА ЦИТАТ =====
 def load_quotes() -> List[str]:
     if not os.path.exists(QUOTES_FILE):
-        # Минимальный запас — замени на свои «книжные» цитаты (с авторами) в quotes.txt
         return [
             "Любовь — это жизнь, и всё, что я понимаю в жизни, я понимаю только потому, что люблю. — Лев Толстой",
             "Любить — значит видеть человека таким, каким его задумал Бог. — Ф. М. Достоевский",
@@ -30,11 +31,9 @@ def load_quotes() -> List[str]:
     with open(QUOTES_FILE, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
-QUOTES: List[str] = load_quotes()
 
-
+# ===== ЛОГИКА ПОЛУЧЕНИЯ ЦИТАТ =====
 def next_quote_for(chat_id: int) -> str:
-    """Вернёт следующую цитату без повторов (при исчерпании — тасуем заново)."""
     state = chat_state.get(chat_id)
     if not state or not state.get("order"):
         order = list(range(len(QUOTES)))
@@ -54,6 +53,7 @@ def next_quote_for(chat_id: int) -> str:
     return q
 
 
+# ===== КНОПКИ =====
 def kb_start() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🗓️ Цитата дня", callback_data="get")]])
 
@@ -61,40 +61,38 @@ def kb_start() -> InlineKeyboardMarkup:
 def kb_after_quote() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("📣 Отправить в канал", callback_data="send"),
-        InlineKeyboardButton("🔁 Поменять цитату", callback_data="change")
+        InlineKeyboardButton("🔁 Поменять цитату", callback_data="change"),
+        InlineKeyboardButton("🔄 Обновить цитаты", callback_data="reload")
     ]])
 
 
+# ===== ОТОБРАЖЕНИЕ ЦИТАТЫ =====
 async def send_quote_flow(chat_id: int, context: ContextTypes.DEFAULT_TYPE, new_quote: Optional[str] = None):
-    """Показывает цитату (новую, если задана) и выставляет кнопки."""
     if new_quote is None:
         new_quote = next_quote_for(chat_id)
-    # запомним текущую цитату для «Отправить в канал»
     context.chat_data["current_quote"] = new_quote
     await context.bot.send_message(chat_id=chat_id, text=new_quote, reply_markup=kb_after_quote())
 
 
-# ==== HANDLERS ====
+# ===== ОБРАБОТЧИКИ =====
 async def start_like(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показываем кнопку пробуждения."""
     await update.effective_message.reply_text(
         "Нажми «Цитата дня» — пришлю цитату и предложу отправить её в канал.",
         reply_markup=kb_start()
     )
 
+
 async def on_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Колбэк «получить цитату» — будим и даём цитату + кнопки действий."""
     query = update.callback_query
     await query.answer()
     await send_quote_flow(query.message.chat_id, context)
 
+
 async def on_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Колбэк «отправить в канал» — шлём текущую цитату в канал."""
     query = update.callback_query
     await query.answer()
     q = context.chat_data.get("current_quote")
     if not q:
-        # вдруг нажали до получения цитаты — подстрахуемся
         q = next_quote_for(query.message.chat_id)
         context.chat_data["current_quote"] = q
     try:
@@ -103,36 +101,58 @@ async def on_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await query.message.reply_text(f"❌ Не удалось отправить в канал: {e}", reply_markup=kb_after_quote())
 
+
 async def on_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Колбэк «поменять цитату» — генерим новую и снова показываем кнопки."""
     query = update.callback_query
     await query.answer()
     new_q = next_quote_for(query.message.chat_id)
     await send_quote_flow(query.message.chat_id, context, new_quote=new_q)
 
+
+async def on_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    global QUOTES
+    QUOTES = load_quotes()
+    chat_state.clear()
+    await query.message.reply_text(f"♻ Цитаты обновлены. Всего теперь {len(QUOTES)} шт.", reply_markup=kb_start())
+
+
+async def reload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global QUOTES
+    QUOTES = load_quotes()
+    chat_state.clear()
+    await update.effective_message.reply_text(f"♻ Цитаты обновлены. Всего теперь {len(QUOTES)} шт.")
+
+
 async def push_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /push — разово опубликовать новую цитату сразу в канал."""
     q = next_quote_for(update.effective_chat.id)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=q)
     await update.effective_message.reply_text("✅ Цитата опубликована в канал.")
 
+
+# ===== СБОРКА ПРИЛОЖЕНИЯ =====
 def build_app() -> Application:
     if not TOKEN:
         raise RuntimeError("ENV TOKEN не задан. Установи TOKEN=твой_токен_бота")
     app = Application.builder().token(TOKEN).build()
 
-    # «Пробуждение»:
+    # Пробуждение
     app.add_handler(CommandHandler("start", start_like))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start_like))  # любое сообщение как «/start»
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start_like))
 
-    # Колбэки:
+    # Кнопки
     app.add_handler(CallbackQueryHandler(on_get, pattern="^get$"))
     app.add_handler(CallbackQueryHandler(on_send, pattern="^send$"))
     app.add_handler(CallbackQueryHandler(on_change, pattern="^change$"))
+    app.add_handler(CallbackQueryHandler(on_reload, pattern="^reload$"))
 
-    # Доп. команда:
+    # Команды
+    app.add_handler(CommandHandler("reload", reload_cmd))
     app.add_handler(CommandHandler("push", push_cmd))
+
     return app
+
 
 async def setup_webhook(app: Application):
     base = os.getenv("WEBHOOK_BASE")  # например, https://your-service.onrender.com
@@ -144,7 +164,9 @@ async def setup_webhook(app: Application):
     await app.bot.set_webhook(url=url, drop_pending_updates=True)
     await app.run_webhook(listen="0.0.0.0", port=port, webhook_path=path, stop_signals=None)
 
+
 if __name__ == "__main__":
+    QUOTES = load_quotes()
     app = build_app()
     mode = os.getenv("MODE", "polling").lower()
     if mode == "webhook":
