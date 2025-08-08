@@ -1,198 +1,101 @@
 import os
 import random
-from typing import Dict, List, Optional
-
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, MessageHandler,
-    ContextTypes, filters
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 
-# ===== НАСТРОЙКИ =====
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002701059389"))  # ID канала для постинга
-QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по одной строке)
-TOKEN = os.getenv("TOKEN")                                    # токен бота
+# === Переменные окружения (Render -> Environment) ===
+TOKEN = os.getenv("TOKEN")
+WEBHOOK_BASE = os.getenv("WEBHOOK_BASE")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # строкой тоже ок
+MODE = os.getenv("MODE", "webhook").lower()
+PORT = int(os.getenv("PORT", 8443))
 
-# Память «без повторов» по чатам
-chat_state: Dict[int, Dict[str, object]] = {}
-QUOTES: List[str] = []
+# Базовые проверки (чтобы падало явно, если чего-то нет)
+if not TOKEN:
+    raise RuntimeError("ENV TOKEN не задан. Установи TOKEN=твой_токен_бота в Render → Environment.")
+if not WEBHOOK_BASE:
+    raise RuntimeError("ENV WEBHOOK_BASE не задан. Пример: https://mukisha.onrender.com")
+if not CHANNEL_ID:
+    raise RuntimeError("ENV CHANNEL_ID не задан. Пример: -1002701059389")
 
+# === Простой набор цитат (можешь расширить) ===
+QUOTES = [
+    "Любовь — это когда счастье другого человека важнее твоего собственного. — Х. Джексон Браун",
+    "Мы принимаем любовь, которую думаем, что заслуживаем. — Стивен Чбоски",
+    "Там, где есть любовь, есть жизнь. — Махатма Ганди",
+    "Любить — значит видеть чудо, невидимое для других. — Франсуа Мориак",
+    "Только в любви мы можем найти себя по-настоящему. — Томас Мертон",
+]
 
-# ===== ЗАГРУЗКА ЦИТАТ =====
-def load_quotes() -> List[str]:
-    """Читает цитаты из файла quotes.txt (UTF-8), пустые строки игнорирует."""
-    if not os.path.exists(QUOTES_FILE):
-        # Небольшой запас, пока не положили quotes.txt
-        return [
-            "Любовь — это жизнь, и всё, что я понимаю в жизни, я понимаю только потому, что люблю. — Лев Толстой",
-            "Любить — значит видеть человека таким, каким его задумал Бог. — Ф. М. Достоевский",
-            "Величайшее счастье в жизни — уверенность, что тебя любят. — Виктор Гюго",
-            "Быть любимым даёт силу, а любить даёт мужество. — Лао-цзы",
-            "Мы любим не потому, что нашли совершенного человека, а потому, что научились видеть совершенство в несовершенном. — Сэм Кин",
-        ]
-    with open(QUOTES_FILE, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
-
-
-# ===== ЛОГИКА ВЫБОРА ЦИТАТ =====
-def next_quote_for(chat_id: int) -> str:
-    """Возвращает следующую цитату без повторов; при исчерпании — тасует заново."""
-    state = chat_state.get(chat_id)
-    if not state or not state.get("order"):
-        order = list(range(len(QUOTES)))
-        random.shuffle(order)
-        chat_state[chat_id] = {"order": order, "idx": 0}
-        state = chat_state[chat_id]
-
-    order: List[int] = state["order"]  # type: ignore
-    idx: int = state["idx"]            # type: ignore
-
-    q = QUOTES[order[idx]]
-    idx += 1
-    if idx >= len(order):
-        random.shuffle(order)
-        idx = 0
-    state["idx"] = idx
-    return q
+# Запоминаем «текущую» цитату для каждого чата
+current_quotes = {}
 
 
-# ===== КНОПКИ =====
-def kb_start() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🗓️ Цитата дня", callback_data="get")]])
-
-
-def kb_actions() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("📣 Отправить в канал", callback_data="send"),
-        InlineKeyboardButton("🔁 Поменять цитату", callback_data="change"),
-        InlineKeyboardButton("🔄 Обновить цитаты", callback_data="reload"),
-    ]])
-
-
-# ===== ПОКАЗ ЦИТАТЫ =====
-async def show_quote(chat_id: int, context: ContextTypes.DEFAULT_TYPE, quote: Optional[str] = None):
-    if quote is None:
-        quote = next_quote_for(chat_id)
-    context.chat_data["current_quote"] = quote
-    await context.bot.send_message(chat_id=chat_id, text=quote, reply_markup=kb_actions())
-
-
-# ===== ОБРАБОТЧИКИ =====
-async def start_like(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Любой текст (и /start) — показываем кнопку запуска."""
-    await update.effective_message.reply_text(
-        "Нажми «Цитата дня» — пришлю цитату и предложу отправить её в канал.",
-        reply_markup=kb_start()
+# === Хендлеры ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("📩 /start получен")
+    quote = random.choice(QUOTES)
+    current_quotes[update.effective_chat.id] = quote
+    keyboard = [
+        [InlineKeyboardButton("📣 Отправить в канал", callback_data="send")],
+        [InlineKeyboardButton("🔁 Поменять цитату", callback_data="change")],
+    ]
+    await update.message.reply_text(
+        f"📜 Цитата дня:\n\n{quote}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
-async def on_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    chat_id = update.effective_chat.id
     await query.answer()
-    await show_quote(query.message.chat_id, context)
+    print(f"🖱 Кнопка нажата: {query.data}, chat={chat_id}")
+
+    if query.data == "send":
+        quote = current_quotes.get(chat_id)
+        if quote:
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=quote)
+            await query.edit_message_text(f"✅ Цитата отправлена в канал:\n\n{quote}")
+        else:
+            await query.edit_message_text("Нет цитаты в памяти. Нажми /start.")
+
+    elif query.data == "change":
+        quote = random.choice(QUOTES)
+        current_quotes[chat_id] = quote
+        keyboard = [
+            [InlineKeyboardButton("📣 Отправить в канал", callback_data="send")],
+            [InlineKeyboardButton("🔁 Поменять цитату", callback_data="change")],
+        ]
+        await query.edit_message_text(
+            f"📜 Новая цитата:\n\n{quote}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
-async def on_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    q = context.chat_data.get("current_quote")
-    if not q:
-        q = next_quote_for(query.message.chat_id)
-        context.chat_data["current_quote"] = q
-    try:
-        await context.bot.send_message(chat_id=CHANNEL_ID, text=q)
-        await query.message.reply_text("✅ Отправил в канал.", reply_markup=kb_actions())
-    except Exception as e:
-        await query.message.reply_text(f"❌ Не удалось отправить в канал: {e}", reply_markup=kb_actions())
-
-
-async def on_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    new_q = next_quote_for(query.message.chat_id)
-    await show_quote(query.message.chat_id, context, quote=new_q)
-
-
-async def on_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Кнопка «Обновить цитаты» — перечитать файл и сбросить очереди."""
-    query = update.callback_query
-    await query.answer()
-    global QUOTES
-    QUOTES = load_quotes()
-    chat_state.clear()
-    await query.message.reply_text(f"♻ Цитаты обновлены. Всего теперь {len(QUOTES)} шт.", reply_markup=kb_start())
-
-
-async def reload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /reload — то же самое, только командой."""
-    global QUOTES
-    QUOTES = load_quotes()
-    chat_state.clear()
-    await update.effective_message.reply_text(f"♻ Цитаты обновлены. Всего теперь {len(QUOTES)} шт.")
-
-
-async def push_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /push — сразу опубликовать новую цитату в канал."""
-    q = next_quote_for(update.effective_chat.id)
-    await context.bot.send_message(chat_id=CHANNEL_ID, text=q)
-    await update.effective_message.reply_text("✅ Цитата опубликована в канал.")
-
-
-# ===== post_init: ставим вебхук перед стартом =====
-async def post_init(app: Application):
-    base = os.getenv("WEBHOOK_BASE")
-    if not base:
-        raise RuntimeError("ENV WEBHOOK_BASE не задан")
-    url = f"{base}/webhook/{TOKEN}"
-    await app.bot.set_webhook(url=url, drop_pending_updates=True)
-    print(f"✅ Webhook установлен: {url}")
-
-
-# ===== СБОРКА ПРИЛОЖЕНИЯ =====
-def build_app() -> Application:
-    if not TOKEN:
-        raise RuntimeError("ENV TOKEN не задан. Установи TOKEN=твой_токен_бота")
-    app = Application.builder().token(TOKEN).build()
-
-    # Пробуждение
-    app.add_handler(CommandHandler("start", start_like))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start_like))
-
-    # Кнопки
-    app.add_handler(CallbackQueryHandler(on_get, pattern="^get$"))
-    app.add_handler(CallbackQueryHandler(on_send, pattern="^send$"))
-    app.add_handler(CallbackQueryHandler(on_change, pattern="^change$"))
-    app.add_handler(CallbackQueryHandler(on_reload, pattern="^reload$"))
-
-    # Команды
-    app.add_handler(CommandHandler("reload", reload_cmd))
-    app.add_handler(CommandHandler("push", push_cmd))
-
+# === Приложение ===
+def build_app():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
     return app
 
 
-# ===== ЗАПУСК =====
+# === Запуск (Render) ===
 if __name__ == "__main__":
-    QUOTES = load_quotes()
     app = build_app()
 
-    mode = os.getenv("MODE", "polling").lower()
-    if mode == "webhook":
-        # Укажем post_init — PTB вызовет его в своём event loop до старта
-        app.post_init = post_init
-
-        port = int(os.getenv("PORT", "8080"))
-        base = os.getenv("WEBHOOK_BASE")
-        if not base:
-            raise RuntimeError("ENV WEBHOOK_BASE не задан")
-        url = f"{base}/webhook/{TOKEN}"
-
-        # run_webhook С ВЕРНОЙ СИГНАТУРОЙ: только webhook_url (без webhook_path!)
+    if MODE == "webhook":
+        webhook_url = f"{WEBHOOK_BASE}/webhook/{TOKEN}"
+        print(f"🚀 WEBHOOK режим. URL: {webhook_url} | PORT: {PORT}")
         app.run_webhook(
             listen="0.0.0.0",
-            port=port,
-            webhook_url=url,
-            stop_signals=None
+            port=PORT,
+            url_path=TOKEN,           # путь у вашего сервера
+            webhook_url=webhook_url,  # полный публичный URL для Telegram
+            allowed_updates=Update.ALL_TYPES
         )
     else:
-        app.run_polling()
+        print("🚀 POLLING режим")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
