@@ -1,6 +1,5 @@
 import os
 import random
-import asyncio
 from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,7 +10,7 @@ from telegram.ext import (
 
 # ===== НАСТРОЙКИ =====
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002701059389"))  # ID канала
-QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по строке)
+QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами
 TOKEN = os.getenv("TOKEN")                                    # токен бота
 
 # Память «без повторов» на чат
@@ -132,6 +131,16 @@ async def push_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("✅ Цитата опубликована в канал.")
 
 
+# ===== POST_INIT ДЛЯ ВЕБХУКА =====
+async def post_init(app: Application):
+    base = os.getenv("WEBHOOK_BASE")
+    if not base:
+        raise RuntimeError("ENV WEBHOOK_BASE не задан")
+    url = f"{base}/webhook/{TOKEN}"
+    await app.bot.set_webhook(url=url, drop_pending_updates=True)
+    print(f"✅ Webhook установлен: {url}")
+
+
 # ===== СБОРКА ПРИЛОЖЕНИЯ =====
 def build_app() -> Application:
     if not TOKEN:
@@ -155,23 +164,17 @@ def build_app() -> Application:
     return app
 
 
-# ===== ЗАПУСК (Render) =====
+# ===== ЗАПУСК =====
 if __name__ == "__main__":
     QUOTES = load_quotes()
     app = build_app()
+
     mode = os.getenv("MODE", "polling").lower()
-
     if mode == "webhook":
-        base = os.getenv("WEBHOOK_BASE")
-        if not base:
-            raise RuntimeError("ENV WEBHOOK_BASE не задан")
+        app.post_init = post_init
         port = int(os.getenv("PORT", "8080"))
+        base = os.getenv("WEBHOOK_BASE")
         url = f"{base}/webhook/{TOKEN}"
-
-        # 1) ЯВНО РЕГИСТРИРУЕМ ВЕБХУК У TELEGRAM (асинхронно, но единоразово)
-        asyncio.run(app.bot.set_webhook(url=url, drop_pending_updates=True))
-
-        # 2) СТАРТУЕМ ВЕБХУК-СЕРВЕР
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
