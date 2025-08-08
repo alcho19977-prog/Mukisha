@@ -10,7 +10,7 @@ from telegram.ext import (
 
 # ===== НАСТРОЙКИ =====
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002701059389"))  # ID канала
-QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами
+QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по строке)
 TOKEN = os.getenv("TOKEN")                                    # токен бота
 
 # Память «без повторов» на чат
@@ -154,7 +154,7 @@ def build_app() -> Application:
     return app
 
 
-# ===== ЗАПУСК ДЛЯ RENDER =====
+# ===== ЗАПУСК (Render) =====
 if __name__ == "__main__":
     QUOTES = load_quotes()
     app = build_app()
@@ -167,7 +167,7 @@ if __name__ == "__main__":
         port = int(os.getenv("PORT", "8080"))
         path = f"/webhook/{TOKEN}"
         url = f"{base}{path}"
-        app.bot.set_webhook(url=url, drop_pending_updates=True)
+        # run_webhook сам установит вебхук; set_webhook вручную не нужен
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
