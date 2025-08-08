@@ -11,8 +11,8 @@ from telegram.ext import (
 
 # ===== НАСТРОЙКИ =====
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002701059389"))  # ID канала
-QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами
-TOKEN = os.getenv("TOKEN")                                    # токен из ENV
+QUOTES_FILE = os.getenv("QUOTES_FILE", "quotes.txt")          # файл с цитатами (по строке)
+TOKEN = os.getenv("TOKEN")                                    # токен бота
 
 # Память «без повторов» на чат
 chat_state: Dict[int, Dict[str, object]] = {}
@@ -155,7 +155,7 @@ def build_app() -> Application:
     return app
 
 
-# ===== ЗАПУСК =====
+# ===== ЗАПУСК ДЛЯ RENDER =====
 async def setup_webhook(app: Application):
     base = os.getenv("WEBHOOK_BASE")  # например, https://your-service.onrender.com
     if not base:
@@ -164,7 +164,12 @@ async def setup_webhook(app: Application):
     path = f"/webhook/{TOKEN}"
     url = f"{base}{path}"
     await app.bot.set_webhook(url=url, drop_pending_updates=True)
-    await app.run_webhook(listen="0.0.0.0", port=port, webhook_path=path, stop_signals=None)
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=url,
+        stop_signals=None
+    )
 
 
 if __name__ == "__main__":
